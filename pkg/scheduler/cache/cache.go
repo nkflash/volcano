@@ -19,6 +19,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	coreV1 "k8s.io/client-go/applyconfigurations/core/v1"
 	"os"
 	"strconv"
 	"strings"
@@ -85,8 +86,8 @@ func init() {
 }
 
 // New returns a Cache implementation.
-func New(config *rest.Config, schedulerNames []string, defaultQueue string, nodeSelectors []string) Cache {
-	return newSchedulerCache(config, schedulerNames, defaultQueue, nodeSelectors)
+func New(config *rest.Config, schedulerNames []string, defaultQueue string, nodeSelectors []string, enableApplyStatus bool) Cache {
+	return newSchedulerCache(config, schedulerNames, defaultQueue, nodeSelectors, enableApplyStatus)
 }
 
 // SchedulerCache cache for the kube batch
@@ -181,8 +182,10 @@ func NewBinder() *DefaultBinder {
 }
 
 type defaultEvictor struct {
-	kubeclient *kubernetes.Clientset
-	recorder   record.EventRecorder
+	kubeclient  *kubernetes.Clientset
+	recorder    record.EventRecorder
+	podInformer infov1.PodInformer
+	enableApplyStatus bool
 }
 
 // Evict will send delete pod request to api server
@@ -210,9 +213,47 @@ func (de *defaultEvictor) Evict(p *v1.Pod, reason string) error {
 		klog.Errorf("Failed to update pod <%v/%v> status: %v", pod.Namespace, pod.Name, err)
 		return err
 	}
+	/**
+	evict pod
+	*/
+	//eviction := &policyv1.Eviction{}
+	//if err := de.kubeclient.CoreV1().Pods(p.Namespace).EvictV1(context.TODO(), eviction); err != nil {
+	//	klog.Errorf("Failed to apply pod <%v/%v> status: %v", pod.Namespace, pod.Name, err)
+	//	return err
+	//}
+
+	/**
+	delete pod
+	*/
 	if err := de.kubeclient.CoreV1().Pods(p.Namespace).Delete(context.TODO(), p.Name, metav1.DeleteOptions{}); err != nil {
 		klog.Errorf("Failed to evict pod <%v/%v>: %#v", p.Namespace, p.Name, err)
 		return err
+	}
+	/**
+	apply status
+	*/
+	if de.enableApplyStatus{
+		go func() {
+			time.Sleep(60 * time.Second)
+			klog.V(4).Infof("begin to apply status")
+			currentPod, err := de.podInformer.Lister().Pods(p.Namespace).Get(p.Name)
+			if err != nil {
+				//pod has been deleted
+				return
+			}
+			newPod, err := coreV1.ExtractPod(currentPod, "kubectl")
+			if err != nil {
+				klog.Errorf("extractPodError")
+			}
+			klog.V(4).Infof("pod's status: %+v, %+v, %+v", currentPod.Status, currentPod.Status.Phase)
+			if currentPod.Status.Phase == v1.PodPending {
+				podStatus := coreV1.PodStatus().WithPhase(v1.PodFailed)
+				newPod.WithStatus(podStatus)
+				if _, err := de.kubeclient.CoreV1().Pods(currentPod.Namespace).ApplyStatus(context.TODO(), newPod, metav1.ApplyOptions{FieldManager: "kubectl", Force: true}); err != nil {
+					klog.Errorf("Failed to apply pod <%v/%v> status: %v", currentPod.Namespace, currentPod.Name, err)
+				}
+			}
+		}()
 	}
 
 	return nil
@@ -377,7 +418,7 @@ func (pgb *podgroupBinder) Bind(job *schedulingapi.JobInfo, cluster string) (*sc
 	return job, nil
 }
 
-func newSchedulerCache(config *rest.Config, schedulerNames []string, defaultQueue string, nodeSelectors []string) *SchedulerCache {
+func newSchedulerCache(config *rest.Config, schedulerNames []string, defaultQueue string, nodeSelectors []string, enableApplyStatus bool) *SchedulerCache {
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(fmt.Sprintf("failed init kubeClient, with err: %v", err))
@@ -468,11 +509,6 @@ func newSchedulerCache(config *rest.Config, schedulerNames []string, defaultQueu
 		sc.batchNum = batchNum
 	} else {
 		sc.batchNum = 1
-	}
-
-	sc.Evictor = &defaultEvictor{
-		kubeclient: sc.kubeClient,
-		recorder:   sc.Recorder,
 	}
 
 	sc.StatusUpdater = &defaultStatusUpdater{
@@ -649,6 +685,12 @@ func newSchedulerCache(config *rest.Config, schedulerNames []string, defaultQueu
 		UpdateFunc: sc.UpdateNumaInfoV1alpha1,
 		DeleteFunc: sc.DeleteNumaInfoV1alpha1,
 	})
+	sc.Evictor = &defaultEvictor{
+		kubeclient:  sc.kubeClient,
+		recorder:    sc.Recorder,
+		podInformer: sc.podInformer,
+		enableApplyStatus: enableApplyStatus,
+	}
 	return sc
 }
 

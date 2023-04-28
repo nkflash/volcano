@@ -132,6 +132,8 @@ spec:
     spec:
       serviceAccount: volcano-admission
       priorityClassName: system-cluster-critical
+      imagePullSecrets:
+        - name: harbor-platform-readonly-secret
       containers:
         - args:
             - --enabled-admission=/jobs/mutate,/jobs/validate,/podgroups/mutate,/pods/validate,/pods/mutate,/queues/mutate,/queues/validate
@@ -145,7 +147,7 @@ spec:
             - --port=8443
             - -v=4
             - 2>&1
-          image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-webhook-manager:release-v1.6.0-binpack
+          image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-webhook-manager:release-v1.6.0-newquota
           imagePullPolicy: IfNotPresent
           name: admission
           volumeMounts:
@@ -191,9 +193,11 @@ spec:
       serviceAccountName: volcano-admission
       priorityClassName: system-cluster-critical
       restartPolicy: Never
+      imagePullSecrets:
+        - name: harbor-platform-readonly-secret
       containers:
         - name: main
-          image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-webhook-manager:release-v1.6.0-binpack
+          image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-webhook-manager:release-v1.6.0-newquota
           imagePullPolicy: IfNotPresent
           command: ["./gen-admission-secret.sh", "--service", "volcano-admission-service", "--namespace",
                     "volcano-system", "--secret", "volcano-admission-secret"]
@@ -8509,9 +8513,11 @@ spec:
     spec:
       serviceAccount: volcano-controllers
       priorityClassName: system-cluster-critical
+      imagePullSecrets:
+        - name: harbor-platform-readonly-secret
       containers:
           - name: volcano-controllers
-            image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-controller-manager:release-v1.6.0-binpack
+            image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-controller-manager:release-v1.6.0-newquota
             args:
               - --logtostderr
               - --enable-healthz=true
@@ -8547,7 +8553,7 @@ metadata:
   namespace: volcano-system
 data:
   volcano-scheduler.conf: |
-    actions: "enqueue, reclaim, allocate, preempt, backfill"
+    actions: "enqueue, allocate, reclaim, preempt, backfill"
     tiers:
     - plugins:
       - name: priority
@@ -8558,7 +8564,6 @@ data:
       - name: conformance
       - name: sla
     - plugins:
-      - name: overcommit
       - name: drf
       - name: predicates
       - name: proportion
@@ -8701,12 +8706,13 @@ spec:
           operator: Exists
       containers:
         - name: volcano-scheduler
-          image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-scheduler:release-v1.6.0-binpack
+          image: harbor.platform.baai-inner.ac.cn/baai-third/volcanosh/volcanosh-scheduler:release-v1.6.0-newquota
           args:
             - --logtostderr
             - --scheduler-conf=/volcano.scheduler/volcano-scheduler.conf
             - --enable-healthz=true
             - --enable-metrics=true
+            - --enable-applystatus=true
             - -v=5
             - 2>&1
           imagePullPolicy: "Always"
